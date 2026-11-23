@@ -66,9 +66,23 @@ there and warns you. "Scan anyway" exists for broken uninstallers.
 
 ## Building
 
-```bash
-pyinstaller winuninstall.spec
+Double-click `BUILD-ME.cmd`, or:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build.ps1
 ```
+
+Builds `dist\SimpleWinUninstall.exe`, refusing if the self-test fails, then
+launches it once to check a window appears. Add `-Installer` (or double-click
+`BUILD-INSTALLER.cmd`) for `dist\SimpleWinUninstallSetup.exe`, which needs
+[Inno Setup](https://jrsoftware.org/isinfo.php)
+(`winget install --id JRSoftware.InnoSetup`).
+
+The installer is per-user, so it needs no admin prompt, and running a newer one
+updates in place. It adds a Start menu entry and an entry in Windows' own
+Installed apps list. Uninstalling removes the app and its logs but keeps
+`%LOCALAPPDATA%\SimpleWinUninstall\backups`, since those `.reg` files are the
+only way to undo a registry removal.
 
 ## Tests
 

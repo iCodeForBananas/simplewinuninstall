@@ -1,0 +1,28 @@
+SimpleWinUninstall removes apps and the things they leave behind. Here is
+exactly what it will and will not do.
+
+WHAT IT DOES
+  Runs an app's own uninstaller, then looks for what it left behind:
+  folders, shortcuts, registry keys, services and scheduled tasks. Every
+  leftover is shown to you before anything is removed.
+
+WHAT IT WILL NOT DO
+  Nothing is removed until you review the list and confirm. Anything
+  uncertain - drive-sweep finds, partial name matches, game saves, browser
+  profiles, names another installed app also uses - is listed but left
+  unticked. It never touches Windows, shared folders like Program Files
+  itself, anything inside another installed app, links or junctions,
+  Software\Microsoft, or its own files.
+
+UNDOING IT
+  Files go to the Recycle Bin. Registry keys, services and tasks are
+  exported to %LOCALAPPDATA%\SimpleWinUninstall\backups first; double-click
+  a .reg file there to restore it. Uninstalling SimpleWinUninstall keeps
+  those backups and removes only its logs.
+
+PRIVACY
+  No telemetry. No analytics. No network connections of any kind. The
+  application contains no networking code at all.
+
+NO WARRANTY
+  MIT licensed. It is a tool that removes things; read the review screen.
