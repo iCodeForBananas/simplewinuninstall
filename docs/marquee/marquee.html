@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- Source for marquee.png (1400x560). Re-render with headless Chrome:
+     chrome --headless=new --hide-scrollbars --force-device-scale-factor=1
+            --window-size=1400,560 --screenshot=marquee.png marquee.html
+     The window on the right is an illustration of the leftover review, not a screenshot. -->
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1400px; height: 560px; overflow: hidden; position: relative; color: #E6E8EB;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(ellipse at 76% 50%, rgb(86 212 221 / 0.13), transparent 55%), #0F1114; }
+  .wrap { display: flex; align-items: center; height: 100%; padding: 0 90px 0 110px; gap: 70px; }
+  .brand { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+  .row { display: flex; align-items: center; gap: 28px; }
+  .row img { width: 120px; height: 120px; }
+  h1 { font-size: 60px; font-weight: 800; letter-spacing: -1px; }
+  p { font-size: 28px; line-height: 1.35; color: #98A2B0; max-width: 600px; }
+  p b { color: #FFCC00; font-weight: 700; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chips span { font-size: 18px; font-weight: 600; padding: 7px 14px; border-radius: 999px; background: #ffffff10; border: 1px solid #ffffff22; }
+  .chips span.c { background: #56D4DD; color: #062a2d; border-color: #56D4DD; }
+  .win { flex: 0 0 560px; background: #16181C; border: 1px solid #252A31; box-shadow: 0 30px 70px #000a;
+    clip-path: polygon(22px 0, 100% 0, 100% calc(100% - 22px), calc(100% - 22px) 100%, 0 100%, 0 22px); }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid #252A31;
+    font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #56D4DD; }
+  .bar .x { margin-left: auto; color: #98A2B0; letter-spacing: 0; }
+  .tabs { display: flex; gap: 4px; padding: 12px 18px 0; }
+  .tabs span { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; padding: 7px 14px; color: #98A2B0; border-bottom: 2px solid transparent; }
+  .tabs span.on { color: #56D4DD; border-color: #56D4DD; background: #102A2E; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th { text-align: left; font-size: 11px; letter-spacing: 1.5px; color: #98A2B0; font-weight: 700; padding: 12px 18px 8px; border-bottom: 1px solid #252A31; }
+  td { padding: 9px 18px; border-bottom: 1px solid #1B1E23; white-space: nowrap; }
+  td.sz { text-align: right; font-variant-numeric: tabular-nums; color: #E6E8EB; }
+  th.sz { text-align: right; }
+  .ck { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #56D4DD; margin-right: 10px; vertical-align: -2px; }
+  .ck.on { background: #56D4DD; box-shadow: inset 0 0 0 2px #16181C; }
+  .ck.off { border-color: #98A2B0; }
+  .n { font-size: 12px; font-weight: 600; color: #98A2B0; }
+  .n.w { color: #E3B341; }
+  .n.ok { color: #6FD28A; }
+  .foot { display: flex; align-items: center; gap: 14px; padding: 16px 18px; }
+  .foot .tot { font-size: 14px; color: #98A2B0; }
+  .foot .tot b { color: #FFFFFF; font-size: 20px; margin-left: 6px; }
+  .btn { margin-left: auto; font-size: 14px; font-weight: 700; padding: 10px 18px; background: #FFCC00; color: #1a1400; }
+</style></head><body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="row"><img src="../../assets/logo.png"><h1 style="font-size:50px">SimpleWinUninstall</h1></div>
+      <p>Uninstall a Windows app, then find and remove <b>what it left behind</b>.</p>
+      <div class="chips"><span class="c">Windows</span><span>Free · Open source · Recycle Bin undo</span></div>
+    </div>
+    <div class="win">
+      <div class="bar">LEFTOVERS · STEAM<span class="x">SCAN COMPLETE</span></div>
+      <table>
+        <tr><th>LEFTOVER</th><th class="sz">SIZE</th><th>NOTE</th></tr>
+        <tr><td><i class="ck on"></i>Program Files (x86)\Steam</td><td class="sz">1.2 GB</td><td><span class="n ok">Install folder</span></td></tr>
+        <tr><td><i class="ck on"></i>AppData\Local\Steam</td><td class="sz">340 MB</td><td><span class="n ok">Known location</span></td></tr>
+        <tr><td><i class="ck on"></i>Start menu shortcut</td><td class="sz">1 KB</td><td><span class="n ok">Points to app</span></td></tr>
+        <tr><td><i class="ck on"></i>HKCU\Software\Valve\Steam</td><td class="sz">—</td><td><span class="n ok">Registry</span></td></tr>
+        <tr><td><i class="ck on"></i>steam:// link handler</td><td class="sz">—</td><td><span class="n ok">Points to app</span></td></tr>
+        <tr><td><i class="ck off"></i>steamapps\common</td><td class="sz">48 GB</td><td><span class="n w">Check first</span></td></tr>
+      </table>
+      <div class="foot"><span class="tot">Selected<b>1.5 GB</b></span><span class="btn">Remove to Recycle Bin</span></div>
+    </div>
+  </div>
+</body></html>
