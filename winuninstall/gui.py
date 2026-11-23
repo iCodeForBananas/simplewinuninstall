@@ -19,7 +19,10 @@ from hudkit.theme import (
     TEXT_BRIGHT, WARN, FramedPanel, NeoButton, SegmentBar,
 )
 
-from . import APP_NAME, __version__, artifacts, inventory, remover, uninstaller
+from . import (
+    APP_NAME, __version__, artifacts, elevated, held, inventory, remover,
+    uninstaller,
+)
 from .artifacts import (
     FILE, FOLDER, REG_KEY, REG_VALUE, REVIEW, SERVICE, SHORTCUT, SURE, TASK,
     Artifact, ScanReport,
@@ -56,6 +59,11 @@ class App(WizardApp):
         self.selected: set = set()
         self.remove_report: Optional[remover.RemoveReport] = None
         self.use_bin = tk.BooleanVar(value=True)
+        # Retrying leftovers held from an earlier run: no uninstaller, no scan.
+        self.held_session = False
+        self.held_details: Dict[str, str] = {}
+        self.held_count = 0              # held after the last removal
+        self.elevation_declined = False
 
     def step_classes(self) -> list:
         return [("apps", AppsStep), ("uninstall", UninstallStep),
@@ -72,6 +80,10 @@ class App(WizardApp):
         self.report = None
         self.selected = set()
         self.remove_report = None
+        self.held_session = False
+        self.held_details = {}
+        self.held_count = 0
+        self.elevation_declined = False
         self.cancel_event.clear()
         self.steps["apps"].request_reload()
         self.show("apps")
@@ -133,11 +145,14 @@ class AppsStep(Step):
                               command=lambda c=col: self._sort_by(c))
             self.tree.column(col, width=theme.px(widths[col]), anchor="w",
                              stretch=col == "name")
+        self.tree.tag_configure("held", foreground=WARN)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", self._on_double)
 
         self.apps: List[InstalledApp] = []
+        self.held: List[held.HeldApp] = []
         self.by_iid: Dict[str, InstalledApp] = {}
+        self.held_by_iid: Dict[str, held.HeldApp] = {}
         self.sort_col = "name"
         self.sort_desc = False
         self.loaded = False
@@ -156,6 +171,12 @@ class AppsStep(Step):
     def _load(self) -> None:
         self.count.configure(text="Reading installed apps...")
         app = self.app
+        try:
+            self.held = held.load()
+        except Exception:
+            app.log.exception("Could not read held leftovers")
+            self.held = []
+        self._fill()
 
         def work() -> None:
             try:
@@ -195,12 +216,33 @@ class AppsStep(Step):
         self.sort_col = col
         self._fill()
 
+    def _chosen_id(self) -> Optional[str]:
+        chosen = self.tree.selection()
+        if not chosen:
+            return None
+        if chosen[0] in self.held_by_iid:
+            return self.held_by_iid[chosen[0]].id
+        return self.by_iid[chosen[0]].id
+
     def _fill(self) -> None:
         wanted = self.query.get().strip().lower()
-        chosen = self.tree.selection()
-        keep = self.by_iid[chosen[0]].id if chosen else None
+        keep = self._chosen_id()
         self.tree.delete(*self.tree.get_children())
         self.by_iid = {}
+        self.held_by_iid = {}
+        # Held leftovers first: their apps are gone from the list below, so
+        # this is the only place they can be found again.
+        for index, group in enumerate(self.held):
+            if wanted not in group.app.name.lower():
+                continue
+            iid = f"h{index}"
+            self.held_by_iid[iid] = group
+            n = len(group.artifacts)
+            self.tree.insert("", "end", iid=iid, tags=("held",), values=(
+                f"{group.app.name}  (held leftovers)", "Held for later",
+                f"{n} item{'s' if n != 1 else ''}", "", ""))
+            if group.id == keep:
+                self.tree.selection_set(iid)
         rows = [a for a in self.apps if wanted in a.name.lower()
                 or wanted in a.publisher.lower()]
         rows.sort(key=self._sort_key, reverse=self.sort_desc)
@@ -213,13 +255,18 @@ class AppsStep(Step):
                 item.install_date))
             if item.id == keep:
                 self.tree.selection_set(iid)
-        self.count.configure(text=f"{len(rows)} of {len(self.apps)} apps")
-        if self.app.current == "apps":
-            self.app.set_next_enabled(bool(self.tree.selection()))
+        held_note = f"   {len(self.held)} held" if self.held else ""
+        self.count.configure(text=f"{len(rows)} of {len(self.apps)} apps{held_note}")
+        self._on_select()
 
     def _on_select(self, _event=None) -> None:
-        if self.app.current == "apps":
-            self.app.set_next_enabled(bool(self.tree.selection()))
+        if self.app.current != "apps":
+            return
+        chosen = self.tree.selection()
+        self.app.set_next_enabled(bool(chosen))
+        self.app.set_next_text("Review leftovers"
+                               if chosen and chosen[0] in self.held_by_iid
+                               else self.next_text)
 
     def _on_double(self, event) -> None:
         if self.tree.identify_row(event.y):
@@ -229,9 +276,24 @@ class AppsStep(Step):
         chosen = self.tree.selection()
         if not chosen:
             return
+        if chosen[0] in self.held_by_iid:
+            self._open_held(self.held_by_iid[chosen[0]])
+            return
         self.app.target = self.by_iid[chosen[0]]
         self.app.forced = False
+        self.app.held_session = False
         self.app.show("uninstall")
+
+    def _open_held(self, group: held.HeldApp) -> None:
+        """Straight to Review: the uninstaller already ran, last time."""
+        app = self.app
+        app.target = group.app
+        app.forced = False
+        app.held_session = True
+        app.held_details = dict(group.details)
+        app.report = ScanReport(app=group.app, artifacts=list(group.artifacts))
+        app.selected = {a.id for a in group.artifacts}
+        app.show("review")
 
 
 # ===========================================================================
@@ -713,11 +775,16 @@ class ReviewStep(Step):
                                else "Finish")
         report = self.app.report
         self.app.set_next_enabled(bool(items) or not (report and report.artifacts))
-        needs = sum(1 for a in items if a.needs_admin
-                    or "program files" in a.location.lower())
+        needs = self._needing_admin(items)
         self.admin_note.configure(
-            text=f"{needs} selected need Administrator and may fail."
+            text=f"{needs} selected need{'s' if needs == 1 else ''} "
+                 "Administrator. Windows will ask."
             if needs and not self.app.admin else "")
+
+    @staticmethod
+    def _needing_admin(items: List[Artifact]) -> int:
+        return sum(1 for a in items if a.needs_admin
+                   or "program files" in a.location.lower())
 
     def _write_detail(self, item: Optional[Artifact]) -> None:
         d = self.detail
@@ -730,6 +797,11 @@ class ReviewStep(Step):
             else:
                 d.insert("end", "Pick a row to see why it was listed.", "muted")
         else:
+            why_held = self.app.held_details.get(item.id) \
+                if self.app.held_session else None
+            if why_held is not None:
+                d.insert("end", f"Held from last time: {why_held or 'not removed'}\n",
+                         "warn")
             if item.warning:
                 d.insert("end", item.warning + "\n", "warn")
             d.insert("end", item.reason + "\n")
@@ -754,13 +826,24 @@ class ReviewStep(Step):
         review = sum(1 for a in items if a.confidence == REVIEW)
         if review:
             warn += f"\n\n{review} of these are marked Check first."
+        needs = self._needing_admin(items)
+        admin = ""
+        if needs and not self.app.admin:
+            admin = (f"\n\nWindows will ask for Administrator rights for "
+                     f"{needs} of them. Anything not removed is held for later.")
         if messagebox.askyesno(
                 APP_NAME,
                 f"Remove {len(items)} items ({size})?\n\nFiles will be {how}. "
-                "Registry entries are backed up first." + warn,
+                "Registry entries are backed up first." + admin + warn,
                 icon="warning" if warn else "question"):
             self.app.steps["remove"].started = False
             self.app.show("remove")
+
+    def on_back(self) -> None:
+        if self.app.held_session:
+            self.app.start_over()
+        else:
+            self.app.show("scan")
 
 
 # ===========================================================================
@@ -797,6 +880,10 @@ class RemoveStep(Step):
         kids = app.report.children
         other_dirs = [d for o in others for d in inventory.app_dirs(o)]
         child_dirs = [d for c in kids for d in inventory.app_dirs(c)]
+        self.job = dict(other_dirs=other_dirs, child_dirs=child_dirs,
+                        recycle=recycle, allow_installed=forced)
+        self.current_label.configure(text="REMOVING")
+        app.elevation_declined = False
 
         def work() -> None:
             try:
@@ -816,9 +903,57 @@ class RemoveStep(Step):
         self.bar.set(index, total)
         self.where_label.configure(text=location)
 
-    def on_remove_done(self, report) -> None:
-        self.app.remove_report = report
-        self.app.show("done")
+    def on_remove_done(self, report: remover.RemoveReport) -> None:
+        app = self.app
+        retry = [] if app.admin or app.cancel_event.is_set() else \
+            [r.artifact for r in report.failed if remover.needs_elevation(r)]
+        if not retry:
+            self._finish(report)
+            return
+        # Ask Windows - the UAC prompt is the question - for just these items.
+        self.pending = report
+        self.current_label.configure(text="WAITING FOR ADMINISTRATOR")
+        self.bar.start_pulse()
+        self.where_label.configure(
+            text=f"{len(retry)} item{'s' if len(retry) != 1 else ''} need "
+                 "Administrator rights. Windows is asking for permission. "
+                 "If you say no, they are held for later.")
+        target, job = app.target, self.job
+
+        def work() -> None:
+            try:
+                results, error = elevated.remove_elevated(
+                    target, retry, cancel=app.cancel_event, **job)
+            except Exception as exc:
+                app.log.exception("Elevated removal failed")
+                results, error = None, str(exc)
+            app.post("elevated_done", results, error)
+
+        app.run_worker(work)
+
+    def on_elevated_done(self, results, error: str) -> None:
+        self.bar.stop_pulse()
+        report = self.pending
+        if results is None:
+            self.app.elevation_declined = error == elevated.DECLINED
+            for r in report.failed:
+                if remover.needs_elevation(r) and error:
+                    r.detail = f"{r.detail} ({error})"
+        else:
+            fresh = {r.artifact.id: r for r in results}
+            report.results = [fresh.get(r.artifact.id, r) for r in report.results]
+        self._finish(report)
+
+    def _finish(self, report: remover.RemoveReport) -> None:
+        app = self.app
+        try:
+            app.held_count = held.record(app.target, report.results)
+        except Exception:
+            app.log.exception("Could not save held leftovers")
+            app.held_count = 0
+        app.steps["apps"].request_reload()
+        app.remove_report = report
+        app.show("done")
 
     def on_remove_failed(self, message: str) -> None:
         messagebox.showerror(APP_NAME, f"Removal stopped:\n\n{message}")
@@ -864,7 +999,15 @@ class DoneStep(Step):
                 t.insert("end", "Files are in the Recycle Bin. The space comes "
                                 "back when you empty it.\n", "muted")
             if report.failed:
-                t.insert("end", "COULD NOT REMOVE\n", "h")
+                t.insert("end", "HELD FOR LATER\n", "h")
+                t.insert("end", "These could not be removed, so they have been "
+                                "kept. They are at the top of the first screen as "
+                                f"\"{self.app.target.name} (held leftovers)\". "
+                                "Pick that to try again.\n", "muted")
+                if self.app.elevation_declined:
+                    t.insert("end", "Administrator rights were not granted. "
+                                    "Say yes to the Windows prompt next time to "
+                                    "remove them.\n", "muted")
                 for r in report.failed:
                     t.insert("end", f"{r.artifact.location}\n", "path")
                     t.insert("end", f"    {r.detail}\n", "warn")

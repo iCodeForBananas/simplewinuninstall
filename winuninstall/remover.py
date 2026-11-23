@@ -58,6 +58,26 @@ class RemoveReport:
         return sum(r.artifact.size_bytes for r in self.removed)
 
 
+_ADMIN_AREAS = ("\\program files", "\\programdata", "\\windows\\")
+
+
+def needs_elevation(result: ItemResult) -> bool:
+    """Would running this again as Administrator plausibly succeed?
+
+    Never for an item the guards blocked or whose backup failed for another
+    reason: elevation is not a way round either.
+    """
+    if result.ok:
+        return False
+    detail = result.detail.lower()
+    if detail.startswith("blocked") or detail == "unexpected service name":
+        return False
+    a = result.artifact
+    return (a.needs_admin or a.hive == "HKLM" or "administrator" in detail
+            or "denied" in detail
+            or any(area in a.location.lower() for area in _ADMIN_AREAS))
+
+
 def backup_dir_for(app: InstalledApp) -> str:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe = re.sub(r"[^\w.-]+", "_", app.name)[:40] or "app"
@@ -144,18 +164,34 @@ def _remove_service(artifact: Artifact, backup: str, serial: int) -> Tuple[bool,
     name = artifact.name
     if not re.match(r"^[\w .\-]+$", name):
         return False, "unexpected service name"
+    if not service_exists(name):
+        return True, "already gone"
     if not is_admin():
         return False, "needs Administrator"
     target = os.path.join(backup, f"{serial:03d}-service.reg")
     os.makedirs(backup, exist_ok=True)
-    rc, out = run_command(["reg", "export",
-                           f"HKLM\\SYSTEM\\CurrentControlSet\\Services\\{name}",
+    rc, out = run_command(["reg", "export", SERVICES_KEY + "\\" + name,
                            target, "/y"], timeout=60)
     if rc != 0:
         return False, f"not removed, backup failed: {out.strip()}"
     stop_service(name)
     rc, out = run_command(["sc", "delete", name], timeout=60)
-    return rc == 0, "" if rc == 0 else out.strip()
+    if rc == 0:
+        return True, ""
+    if "1072" in out:
+        # A driver that is still loaded: Windows deletes it at the next
+        # restart. Held until then, and dropped from the held list once gone.
+        return False, "marked for deletion; Windows removes it at the next restart"
+    return False, out.strip()
+
+
+SERVICES_KEY = r"HKLM\SYSTEM\CurrentControlSet\Services"
+
+
+def service_exists(name: str) -> bool:
+    """Is the service still registered? Readable without Administrator."""
+    rc, _ = run_command(["reg", "query", SERVICES_KEY + "\\" + name], timeout=60)
+    return rc == 0
 
 
 def _remove_task(artifact: Artifact, backup: str, serial: int) -> Tuple[bool, str]:

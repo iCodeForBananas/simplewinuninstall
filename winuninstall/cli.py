@@ -33,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="use the platform's default widget styling")
     p.add_argument("--native-frame", action="store_true",
                    help="keep the skin but use the normal Windows title bar")
+    # Internal: the elevated half of a removal. The wizard starts it through
+    # UAC for just the items that need Administrator.
+    p.add_argument("--remove-job", metavar="FILE", help=argparse.SUPPRESS)
     return p
 
 
@@ -99,6 +102,9 @@ def do_scan(args) -> int:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.remove_job:
+        from .elevated import run_job
+        return run_job(args.remove_job)
     if args.selftest:
         from .selftest import run
         return run()

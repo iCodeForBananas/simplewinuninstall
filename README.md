@@ -61,6 +61,18 @@ Windows asks before deleting it for good. Registry keys, services and tasks are
 exported to `%LOCALAPPDATA%\SimpleWinUninstall\backups` first, and if the backup
 fails the item is left alone. To restore a key, double-click its `.reg` file.
 
+## When something won't go
+
+If a leftover needs Administrator, such as a driver's service or a machine-wide
+registry key, Windows asks for permission for just those items, and the window
+stays as it is. Anything still not removed, because you said no, a file is in
+use, or a driver only goes at the next restart, is **held**. The app's own
+uninstaller has already run, so it would otherwise be gone from the list.
+Held leftovers sit at the top of the first screen as
+"*App* (held leftovers)" until they are removed, and anything that has
+disappeared on its own drops off. The list lives in
+`%LOCALAPPDATA%\SimpleWinUninstall\held.json`.
+
 If an uninstaller is cancelled the app is still installed, so the scan stops
 there and warns you. "Scan anyway" exists for broken uninstallers.
 

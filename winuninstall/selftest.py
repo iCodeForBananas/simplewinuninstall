@@ -5,6 +5,8 @@ registry key; no real app is touched and no uninstaller is run.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 import re
 import shutil
@@ -16,7 +18,10 @@ from typing import List
 from hudkit import applog
 from hudkit.platform_win import IS_WINDOWS
 
-from . import artifacts, catalog, guards, inventory, matching, remover, uninstaller
+from . import (
+    artifacts, catalog, elevated, guards, held, inventory, matching, remover,
+    uninstaller,
+)
 from .artifacts import REVIEW, SURE, Artifact, RegRoot, ScanRoots
 from .inventory import InstalledApp
 from .matching import EXACT, PREFIX, match_name, name_tokens
@@ -400,10 +405,89 @@ def test_registry() -> None:
             shutil.rmtree(backup, ignore_errors=True)
 
 
+def test_held() -> None:
+    print("\n[11] admin retry and held leftovers, in a sandbox")
+    R = remover.ItemResult
+    # EventLog always exists; it is only ever written to the held list here,
+    # never passed to remover.remove.
+    svc = Artifact(artifacts.SERVICE, "Event Log (EventLog)", "t", name="EventLog",
+                   needs_admin=True)
+    gone_svc = Artifact(artifacts.SERVICE, "Gone (ZzGone)", "t",
+                        name="ZZSimpleWinUninstallNoSuchService", needs_admin=True)
+    hkcu = Artifact(artifacts.REG_KEY, r"HKCU\Software\Zz", "t", hive="HKCU")
+    pf = Artifact(artifacts.FOLDER, r"C:\Program Files\Zz", "t")
+    check(remover.needs_elevation(R(svc, False, "needs Administrator")),
+          "a service that needs Administrator is retried elevated")
+    check(remover.needs_elevation(R(pf, False, "in use or declined")),
+          "a Program Files folder is retried elevated")
+    check(remover.needs_elevation(R(hkcu, False, "ERROR: Access is denied.")),
+          "access denied is retried elevated")
+    check(not remover.needs_elevation(R(svc, True, "")), "a success is not retried")
+    check(not remover.needs_elevation(R(pf, False, "blocked at removal: x")),
+          "elevation is never a way round the guards")
+    check(not remover.needs_elevation(R(hkcu, False, "some other error")),
+          "an ordinary per-user failure is not retried elevated")
+
+    sandbox = tempfile.mkdtemp(prefix="swu-selftest-")
+    try:
+        store = os.path.join(sandbox, "held.json")
+        app = InstalledApp(id="zz-held", name="Zebrafy", reg_hive="HKCU",
+                           reg_key="ZZSimpleWinUninstallNotInstalled")
+        gone = Artifact(artifacts.FOLDER, os.path.join(sandbox, "Gone"), "t")
+        kept = Artifact(artifacts.FOLDER, os.path.join(sandbox, "Kept"), "t")
+        _mk(os.path.join(kept.location, "a"))
+        n = held.record(app, [R(svc, False, "needs Administrator"),
+                              R(kept, False, "in use"), R(hkcu, True, "")], store)
+        check(n == 2, "failures are held, successes are not")
+        groups = held.load(store)
+        check(len(groups) == 1 and groups[0].app.name == "Zebrafy"
+              and groups[0].details.get(svc.id) == "needs Administrator",
+              "held items survive a restart, with the app and the reason")
+        held.record(app, [R(gone, False, "in use")], store)
+        check({a.id for a in held.load(store)[0].artifacts} == {svc.id, kept.id},
+              "a held folder that has since gone is dropped")
+        held.record(app, [R(svc, True, "")], store)
+        check([a.id for a in held.load(store)[0].artifacts] == [kept.id],
+              "removing a held item releases it")
+        held.record(app, [R(kept, True, "")], store)
+        check(held.load(store) == [], "nothing left means nothing listed")
+        check(not remover.service_exists("ZZSimpleWinUninstallNoSuchService"),
+              "a missing service is seen as missing")
+        held.record(app, [R(gone_svc, False, "marked for deletion")], store)
+        check(held.load(store) == [],
+              "a held service that has since gone (after a restart) is dropped")
+        check(remover.remove(app, [gone_svc], recycle=False).results[0].detail
+              == "already gone", "removing a service that is gone counts as done")
+
+        # The elevated half, run in-process: same job file, same guards.
+        job_dir = elevated._job_dir()
+        job = os.path.join(job_dir, "job-" + "0" * 32 + ".json")
+        out = os.path.join(job_dir, "result-" + "0" * 32 + ".json")
+        with open(job, "w", encoding="utf-8") as fh:
+            json.dump({"app": dataclasses.asdict(app),
+                       "items": [dataclasses.asdict(kept)],
+                       "recycle": False, "out": out}, fh)
+        try:
+            check(elevated.run_job(job) == 0, "the elevated helper runs a job")
+            with open(out, encoding="utf-8") as fh:
+                rows = json.load(fh)["results"]
+            check(rows == [{"id": kept.id, "ok": True, "detail": ""}]
+                  and not os.path.exists(kept.location),
+                  "and reports back what it removed")
+        finally:
+            for path in (job, out):
+                if os.path.exists(path):
+                    os.remove(path)
+        check(elevated.run_job(os.path.join(sandbox, "anything.json")) == 2,
+              "the elevated helper refuses a file that is not one of its jobs")
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
 def test_theme_is_standardized() -> None:
     if getattr(sys, "frozen", False):
         return                 # reads the source tree, which a build lacks
-    print("\n[11] one theme, one source")
+    print("\n[12] one theme, one source")
     hex_colour = re.compile(r"#[0-9a-fA-F]{6}\b")
     offenders = []
     for folder in ("hudkit", "winuninstall"):
@@ -441,7 +525,7 @@ def test_theme_is_standardized() -> None:
 def run() -> int:
     applog.setup(console=False)
     for test in (test_matching, test_guards, test_commands, test_scan,
-                 test_registry, test_theme_is_standardized):
+                 test_registry, test_held, test_theme_is_standardized):
         test()
     print("\n" + "=" * 72)
     if _failures:
